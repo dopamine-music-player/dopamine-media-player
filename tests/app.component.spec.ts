@@ -1,0 +1,366 @@
+import { MatDrawer } from '@angular/material/sidenav';
+import { Observable, Subject } from 'rxjs';
+import { IMock, It, Mock, Times } from 'typemoq';
+import { AppComponent } from './app.component';
+import { Logger } from './common/logger';
+import { IntegrationTestRunner } from './testing/integration-test-runner';
+import { EventListenerServiceBase } from './services/event-listener/event-listener.service.base';
+import { MediaSessionService } from './services/media-session/media-session.service';
+import { TrayServiceBase } from './services/tray/tray.service.base';
+import { ScrobblingService } from './services/scrobbling/scrobbling.service';
+import { DiscordService } from './services/discord/discord.service';
+import { DockService } from './services/dock/dock.service';
+import { TranslatorServiceBase } from './services/translator/translator.service.base';
+import { AppearanceServiceBase } from './services/appearance/appearance.service.base';
+import { NavigationServiceBase } from './services/navigation/navigation.service.base';
+import { AddToPlaylistMenu } from './ui/components/add-to-playlist-menu';
+import { DesktopBase } from './common/io/desktop.base';
+import { AudioVisualizer } from './services/playback/audio-visualizer';
+import { LifetimeService } from './services/lifetime/lifetime.service';
+import { DatabaseMigratorBase } from './data/database-migrator.base';
+import { RatingBackupService } from './services/rating-backup/rating-backup.service';
+import { TrackRepositoryBase } from './data/repositories/track-repository.base';
+import { IndexingService } from './services/indexing/indexing.service';
+import { FolderServiceBase } from './services/folder/folder.service.base';
+import { Track } from './data/entities/track';
+
+describe('AppComponent', () => {
+    let databaseMigratorMock: IMock<DatabaseMigratorBase>;
+    let navigationServiceMock: IMock<NavigationServiceBase>;
+    let appearanceServiceMock: IMock<AppearanceServiceBase>;
+    let translatorServiceMock: IMock<TranslatorServiceBase>;
+    let discordServiceMock: IMock<DiscordService>;
+    let dockServiceMock: IMock<DockService>;
+    let scrobblingServiceMock: IMock<ScrobblingService>;
+    let trayServiceMock: IMock<TrayServiceBase>;
+    let mediaSessionServiceMock: IMock<MediaSessionService>;
+    let eventListenerServiceMock: IMock<EventListenerServiceBase>;
+    let lifetimeServiceMock: IMock<LifetimeService>;
+    let audioVisualizerMock: IMock<AudioVisualizer>;
+
+    let addToPlaylistMenuMock: IMock<AddToPlaylistMenu>;
+    let desktopMock: IMock<DesktopBase>;
+    let loggerMock: IMock<Logger>;
+    let matDrawerMock: IMock<MatDrawer>;
+
+    let integrationTestRunnerMock: IMock<IntegrationTestRunner>;
+    let ratingBackupServiceMock: IMock<RatingBackupService>;
+    let trackRepositoryMock: IMock<TrackRepositoryBase>;
+    let indexingServiceMock: IMock<IndexingService>;
+    let folderServiceMock: IMock<FolderServiceBase>;
+
+    let showNowPlayingRequestedMock: Subject<void>;
+    let showNowPlayingRequestedMock$: Observable<void>;
+    let indexingFinishedMock: Subject<void>;
+    let indexingFinishedMock$: Observable<void>;
+    let foldersChangedMock: Subject<void>;
+    let foldersChangedMock$: Observable<void>;
+
+    function createComponent(): AppComponent {
+        return new AppComponent(
+            databaseMigratorMock.object,
+            navigationServiceMock.object,
+            appearanceServiceMock.object,
+            translatorServiceMock.object,
+            discordServiceMock.object,
+            dockServiceMock.object,
+            scrobblingServiceMock.object,
+            trayServiceMock.object,
+            mediaSessionServiceMock.object,
+            eventListenerServiceMock.object,
+            lifetimeServiceMock.object,
+            addToPlaylistMenuMock.object,
+            desktopMock.object,
+            loggerMock.object,
+            audioVisualizerMock.object,
+            integrationTestRunnerMock.object,
+            ratingBackupServiceMock.object,
+            trackRepositoryMock.object,
+            indexingServiceMock.object,
+            folderServiceMock.object,
+        );
+    }
+
+    beforeEach(() => {
+        databaseMigratorMock = Mock.ofType<DatabaseMigratorBase>();
+        navigationServiceMock = Mock.ofType<NavigationServiceBase>();
+        appearanceServiceMock = Mock.ofType<AppearanceServiceBase>();
+        translatorServiceMock = Mock.ofType<TranslatorServiceBase>();
+        discordServiceMock = Mock.ofType<DiscordService>();
+        dockServiceMock = Mock.ofType<DockService>();
+        scrobblingServiceMock = Mock.ofType<ScrobblingService>();
+        trayServiceMock = Mock.ofType<TrayServiceBase>();
+        mediaSessionServiceMock = Mock.ofType<MediaSessionService>();
+        eventListenerServiceMock = Mock.ofType<EventListenerServiceBase>();
+        lifetimeServiceMock = Mock.ofType<LifetimeService>();
+        addToPlaylistMenuMock = Mock.ofType<AddToPlaylistMenu>();
+        desktopMock = Mock.ofType<DesktopBase>();
+        loggerMock = Mock.ofType<Logger>();
+        matDrawerMock = Mock.ofType<MatDrawer>();
+        integrationTestRunnerMock = Mock.ofType<IntegrationTestRunner>();
+        audioVisualizerMock = Mock.ofType<AudioVisualizer>();
+        ratingBackupServiceMock = Mock.ofType<RatingBackupService>();
+        trackRepositoryMock = Mock.ofType<TrackRepositoryBase>();
+        indexingServiceMock = Mock.ofType<IndexingService>();
+        folderServiceMock = Mock.ofType<FolderServiceBase>();
+
+        ratingBackupServiceMock.setup((x) => x.createInitialBackupFromTracksAsync(It.isAny())).returns(async () => {});
+        ratingBackupServiceMock.setup((x) => x.tryAutoRestoreOnStartupAsync(It.isAny())).returns(async () => 0);
+        matDrawerMock.setup((x) => x.toggle()).returns(async () => 'open');
+        ratingBackupServiceMock.setup((x) => x.syncBackupFromTracksAsync(It.isAny())).returns(async () => {});
+
+        showNowPlayingRequestedMock = new Subject();
+        showNowPlayingRequestedMock$ = showNowPlayingRequestedMock.asObservable();
+        indexingFinishedMock = new Subject();
+        indexingFinishedMock$ = indexingFinishedMock.asObservable();
+        foldersChangedMock = new Subject();
+        foldersChangedMock$ = foldersChangedMock.asObservable();
+
+        navigationServiceMock.setup((x) => x.showPlaybackQueueRequested$).returns(() => showNowPlayingRequestedMock$);
+        indexingServiceMock.setup((x) => x.indexingFinished$).returns(() => indexingFinishedMock$);
+        folderServiceMock.setup((x) => x.foldersChanged$).returns(() => foldersChangedMock$);
+        trackRepositoryMock.setup((x) => x.getVisibleTracks()).returns(() => []);
+    });
+
+    describe('constructor', () => {
+        it('should create', () => {
+            // Arrange
+
+            // Act
+            const app: AppComponent = createComponent();
+
+            // Assert
+            expect(app).toBeDefined();
+        });
+
+        it('should declare but not define drawer', () => {
+            // Arrange
+
+            // Act
+            const app: AppComponent = createComponent();
+
+            // Assert
+            expect(app.playbackQueueDrawer).toBeUndefined();
+        });
+
+        it('should define LifetimeService', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+
+            // Act
+            await app.ngOnInit();
+
+            // Assert
+            expect(app.lifetimeService).toBeDefined();
+        });
+    });
+
+    describe('ngOnInit', () => {
+        it('should initialize playlist context menu', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+
+            // Act
+            await app.ngOnInit();
+
+            // Assert
+            addToPlaylistMenuMock.verify((x) => x.initializeAsync(), Times.once());
+        });
+
+        it('should apply appearance', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+
+            // Act
+            await app.ngOnInit();
+
+            // Assert
+            appearanceServiceMock.verify((x) => x.applyAppearanceAsync(), Times.once());
+        });
+
+        it('should apply language', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+
+            // Act
+            await app.ngOnInit();
+
+            // Assert
+            translatorServiceMock.verify((x) => x.applyLanguage(), Times.once());
+        });
+
+        it('should update tray context menu', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+
+            // Act
+            await app.ngOnInit();
+
+            // Assert
+            trayServiceMock.verify((x) => x.updateTrayContextMenu(), Times.once());
+        });
+
+        it('should navigate to loading', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+
+            // Act
+            await app.ngOnInit();
+
+            // Assert
+            navigationServiceMock.verify((x) => x.navigateToLoadingAsync(), Times.once());
+        });
+
+        it('should perform database migrations', async () => {
+            // Arrange
+            const component: AppComponent = createComponent();
+
+            // Act
+            await component.ngOnInit();
+
+            // Assert
+            databaseMigratorMock.verify((x) => x.migrate(), Times.exactly(1));
+        });
+
+        it('should retry ratings backup and restore when collection folders change', async () => {
+            // Arrange
+            const component: AppComponent = createComponent();
+
+            // Act
+            await component.ngOnInit();
+            foldersChangedMock.next();
+
+            // Assert
+            ratingBackupServiceMock.verify((x) => x.resetAutoRestoreGuardAsync(), Times.once());
+        });
+
+        it('should initialize Discord', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+
+            // Act
+            await app.ngOnInit();
+
+            // Assert
+            discordServiceMock.verify((x) => x.initialize(), Times.once());
+        });
+
+        it('should toggle the drawer on showNowPlayingRequested when it is not undefined', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+            app.playbackQueueDrawer = matDrawerMock.object;
+
+            // Act
+            await app.ngOnInit();
+            showNowPlayingRequestedMock.next();
+
+            // Assert
+            matDrawerMock.verify((x) => x.toggle(), Times.exactly(1));
+        });
+
+        it('should initialize MediaSessionService', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+
+            // Act
+            await app.ngOnInit();
+
+            // Assert
+            mediaSessionServiceMock.verify((x) => x.initialize(), Times.once());
+        });
+
+        it('should initialize ScrobblingService', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+
+            // Act
+            await app.ngOnInit();
+
+            // Assert
+            scrobblingServiceMock.verify((x) => x.initialize(), Times.once());
+        });
+
+        it('should initialize LifetimeService', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+
+            // Act
+            await app.ngOnInit();
+
+            // Assert
+            lifetimeServiceMock.verify((x) => x.initialize(), Times.once());
+        });
+
+        it('should connect audio visualizer audio element', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+
+            // Act
+            await app.ngOnInit();
+
+            // Assert
+            audioVisualizerMock.verify((x) => x.initialize(), Times.once());
+        });
+
+        it('should retry ratings restore after indexing is finished', async () => {
+            // Arrange
+            const app: AppComponent = createComponent();
+            trackRepositoryMock.setup((x) => x.getVisibleTracks()).returns(() => [new Track('/library/song.mp3')]);
+
+            // Act
+            await app.ngOnInit();
+            indexingFinishedMock.next();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            // Assert
+            trackRepositoryMock.verify((x) => x.getVisibleTracks(), Times.exactly(1));
+        });
+    });
+
+    describe('handleKeyboardEvent', () => {
+        it('should prevent the default action when space is pressed outside of an input element', () => {
+            // Arrange
+            const keyboardEventMock: IMock<KeyboardEvent> = Mock.ofType<KeyboardEvent>();
+            keyboardEventMock.setup((x) => x.type).returns(() => 'keydown');
+            keyboardEventMock.setup((x) => x.target).returns(() => document.createElement('div'));
+            keyboardEventMock.setup((x) => x.key).returns(() => ' ');
+            const app: AppComponent = createComponent();
+
+            // Act
+            app.handleKeyboardEvent(keyboardEventMock.object);
+
+            // Assert
+            keyboardEventMock.verify((x) => x.preventDefault(), Times.once());
+        });
+
+        it('should not prevent the default action when space is pressed inside an input element', () => {
+            // Arrange
+            const keyboardEventMock: IMock<KeyboardEvent> = Mock.ofType<KeyboardEvent>();
+            keyboardEventMock.setup((x) => x.type).returns(() => 'keydown');
+            keyboardEventMock.setup((x) => x.target).returns(() => document.createElement('input'));
+            keyboardEventMock.setup((x) => x.key).returns(() => ' ');
+            const app: AppComponent = createComponent();
+
+            // Act
+            app.handleKeyboardEvent(keyboardEventMock.object);
+
+            // Assert
+            keyboardEventMock.verify((x) => x.preventDefault(), Times.never());
+        });
+
+        it('should not prevent the default action when another key then space is pressed', () => {
+            // Arrange
+            const keyboardEventMock: IMock<KeyboardEvent> = Mock.ofType<KeyboardEvent>();
+            keyboardEventMock.setup((x) => x.type).returns(() => 'keydown');
+            keyboardEventMock.setup((x) => x.target).returns(() => document.createElement('div'));
+            keyboardEventMock.setup((x) => x.key).returns(() => 'a');
+            const app: AppComponent = createComponent();
+
+            // Act
+            app.handleKeyboardEvent(keyboardEventMock.object);
+
+            // Assert
+            keyboardEventMock.verify((x) => x.preventDefault(), Times.never());
+        });
+    });
+});
