@@ -1,0 +1,88 @@
+import { AfterViewInit, Component, HostListener, ViewEncapsulation } from '@angular/core';
+import { AppearanceServiceBase } from '../../../services/appearance/appearance.service.base';
+import { SettingsBase } from '../../../common/settings/settings.base';
+import { AudioVisualizer } from '../../../services/playback/audio-visualizer';
+import { AudioVisualizerServiceBase } from '../../../services/audio-visualizer/audio-visualizer.service.base';
+import { DocumentProxy } from '../../../common/io/document-proxy';
+import { AnimatedPage } from '../animated-page';
+import { enterLeftToRight, enterRightToLeft } from '../../animations/animations';
+import { CollectionNavigationService } from '../../../services/collection-navigation/collection-navigation.service';
+import { PlaybackService } from '../../../services/playback/playback.service';
+import { SemanticZoomServiceBase } from '../../../services/semantic-zoom/semantic-zoom.service.base';
+
+@Component({
+    selector: 'app-collection',
+    host: { style: 'display: block' },
+    templateUrl: './collection.component.html',
+    styleUrls: ['./collection.component.scss'],
+    encapsulation: ViewEncapsulation.None,
+    animations: [enterLeftToRight, enterRightToLeft],
+})
+export class CollectionComponent extends AnimatedPage implements AfterViewInit {
+    private readonly artistsPage: number = 0;
+    private readonly genresPage: number = 1;
+
+    public constructor(
+        public appearanceService: AppearanceServiceBase,
+        public collectionNavigationService: CollectionNavigationService,
+        public settings: SettingsBase,
+        private playbackService: PlaybackService,
+        private semanticZoomService: SemanticZoomServiceBase,
+        public audioVisualizerService: AudioVisualizerServiceBase,
+        private audioVisualizer: AudioVisualizer,
+        private documentProxy: DocumentProxy,
+    ) {
+        super();
+        this.page = this.collectionNavigationService.page;
+    }
+
+    @HostListener('document:keyup', ['$event'])
+    public handleKeyboardEvent(event: KeyboardEvent): void {
+        if (!this.shouldHandleCollectionKeyboardEvent(event)) {
+            return;
+        }
+
+        if (event.key === ' ') {
+            void this.playbackService.togglePlaybackAsync();
+            return;
+        }
+
+        if (!this.isArtistsOrGenresPage(this.page)) {
+            return;
+        }
+
+        if (event.ctrlKey || event.metaKey || event.altKey) {
+            return;
+        }
+
+        const pressedKey: string = event.key.toLowerCase();
+
+        if (/^[a-z]$/.test(pressedKey)) {
+            this.semanticZoomService.requestZoomIn(pressedKey);
+        }
+    }
+
+    public ngAfterViewInit(): void {
+        this.setAudioVisualizer();
+    }
+
+    private setAudioVisualizer(): void {
+        const canvas: HTMLCanvasElement = this.documentProxy.getCanvasById('collectionAudioVisualizer');
+        this.audioVisualizer.connectCanvas(canvas);
+    }
+
+    public override setPage(page: number): void {
+        this.previousPage = this.page;
+        this.page = page;
+
+        this.collectionNavigationService.page = page;
+    }
+
+    private shouldHandleCollectionKeyboardEvent(event: KeyboardEvent): boolean {
+        return !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement);
+    }
+
+    private isArtistsOrGenresPage(page: number): boolean {
+        return page === this.artistsPage || page === this.genresPage;
+    }
+}

@@ -1,0 +1,272 @@
+import { AfterViewInit, Component, ElementRef, Input, OnChanges, OnDestroy, OnInit, SimpleChanges, ViewChild } from '@angular/core';
+import { CdkVirtualScrollViewport } from '@angular/cdk/scrolling';
+import { MatMenuTrigger } from '@angular/material/menu';
+import { Logger } from '../../../../../common/logger';
+import { NativeElementProxy } from '../../../../../common/native-element-proxy';
+import { PlaylistModel } from '../../../../../services/playlist/playlist-model';
+import { PlaylistRowsGetter } from '../playlist-folder-browser/playlist-rows-getter';
+import { PlaylistOrder, playlistOrderKey } from '../playlist-order';
+import { PlaylistsPersister } from '../playlists-persister';
+import { PlaylistRow } from './playlist-row';
+import { PlaybackService } from '../../../../../services/playback/playback.service';
+import { PlaylistServiceBase } from '../../../../../services/playlist/playlist.service.base';
+import { ApplicationServiceBase } from '../../../../../services/application/application.service.base';
+import { TranslatorServiceBase } from '../../../../../services/translator/translator.service.base';
+import { DialogServiceBase } from '../../../../../services/dialog/dialog.service.base';
+import { MouseSelectionWatcher } from '../../../mouse-selection-watcher';
+import { ContextMenuOpener } from '../../../context-menu-opener';
+import { Subject } from 'rxjs';
+import { debounceTime, takeUntil } from 'rxjs/operators';
+import { Constants } from '../../../../../common/application/constants';
+import { DesktopBase } from '../../../../../common/io/desktop.base';
+import { SearchServiceBase } from '../../../../../services/search/search.service.base';
+import { StringUtils } from '../../../../../common/utils/string-utils';
+import { ScrollPositionService } from '../../../../../services/scroll-position/scroll-position.service';
+import { BaseVirtualScrollBrowser } from '../../base-virtual-scroll-browser';
+import { SettingsBase } from '../../../../../common/settings/settings.base';
+
+@Component({
+    selector: 'app-playlist-browser',
+    host: { style: 'display: block' },
+    templateUrl: './playlist-browser.component.html',
+    styleUrls: ['./playlist-browser.component.scss'],
+    providers: [MouseSelectionWatcher],
+})
+export class PlaylistBrowserComponent extends BaseVirtualScrollBrowser implements OnInit, AfterViewInit, OnChanges, OnDestroy {
+    public readonly playlistOrders: PlaylistOrder[] = Object.values(PlaylistOrder).filter((x): x is PlaylistOrder => typeof x === 'number');
+    public readonly playlistOrderKey = playlistOrderKey;
+
+    private _playlists: PlaylistModel[] = [];
+    private _playlistsPersister: PlaylistsPersister;
+    private availableWidthInPixels: number = 0;
+    private destroy$ = new Subject<void>();
+
+    public constructor(
+        public playbackService: PlaybackService,
+        public playlistService: PlaylistServiceBase,
+        private applicationService: ApplicationServiceBase,
+        private translatorService: TranslatorServiceBase,
+        private dialogService: DialogServiceBase,
+        private playlistRowsGetter: PlaylistRowsGetter,
+        private nativeElementProxy: NativeElementProxy,
+        private mouseSelectionWatcher: MouseSelectionWatcher,
+        public contextMenuOpener: ContextMenuOpener,
+        private desktop: DesktopBase,
+        private settings: SettingsBase,
+        public searchService: SearchServiceBase,
+        private logger: Logger,
+        scrollPositionService: ScrollPositionService,
+    ) {
+        super(scrollPositionService, searchService);
+    }
+
+    public playlistRows: PlaylistRow[] = [];
+
+    public selectedPlaylistOrder: PlaylistOrder;
+
+    public playlistCoverSize: number = 130;
+
+    // Cover + 4px padding + 24px name + 16px vertical margin (m-2)
+    public get playlistRowHeight(): number {
+        return this.playlistCoverSize + 44;
+    }
+
+    public setPlaylistCoverSize(size: number): void {
+        this.playlistCoverSize = size;
+        this.settings.playlistCoverSize = size;
+        this.orderPlaylists();
+    }
+
+    @Input()
+    public scrollPositionKey: string = 'playlists';
+
+    @ViewChild('playlistContextMenuAnchor', { read: MatMenuTrigger, static: false })
+    public playlistContextMenu: MatMenuTrigger;
+
+    @ViewChild('playlistBrowserElement') public playlistBrowserElement: ElementRef;
+
+    @ViewChild(CdkVirtualScrollViewport) public viewPort: CdkVirtualScrollViewport;
+
+    public get playlistsPersister(): PlaylistsPersister {
+        return this._playlistsPersister;
+    }
+
+    @Input()
+    public set playlistsPersister(v: PlaylistsPersister) {
+        this._playlistsPersister = v;
+        this.selectedPlaylistOrder = this.playlistsPersister.getSelectedPlaylistOrder();
+    }
+
+    public get playlists(): PlaylistModel[] {
+        return this._playlists;
+    }
+
+    @Input()
+    public set playlists(v: PlaylistModel[]) {
+        this._playlists = v;
+        this.mouseSelectionWatcher.initialize(this.playlists, false);
+    }
+
+    public get hasPlaylists(): boolean {
+        return this._playlists.length > 0;
+    }
+
+    // Mirrors the debounced text used by the playlists filter, so the empty-folder message doesn't flash while the search settles.
+    public get hasActiveSearch(): boolean {
+        return !StringUtils.isNullOrWhiteSpace(this.searchService.delayedSearchText);
+    }
+
+    public ngOnInit(): void {
+        this.playlistCoverSize = this.settings.playlistCoverSize;
+    }
+
+    public ngOnDestroy(): void {
+        this.disposeScrollPosition(this.scrollPositionKey);
+
+        this.destroy$.next();
+        this.destroy$.complete();
+    }
+
+    public ngOnChanges(changes: SimpleChanges): void {
+        if (changes['playlists'] || changes['playlistsPersister']) {
+            if (this.playlists && this.playlists.length > 0 && this.playlistsPersister) {
+                this.orderPlaylists();
+            }
+        }
+    }
+
+    public ngAfterViewInit(): void {
+        // HACK: avoids a ExpressionChangedAfterItHasBeenCheckedError in DEV mode.
+        setTimeout(() => {
+            this.initializeScrollPosition(this.viewPort, this.scrollPositionKey);
+            this.initializeAvailableWidth();
+
+            if (this.playlistRows.length > 0) {
+                this.orderPlaylists();
+            }
+
+            this.applicationService.windowSizeChanged$
+                .pipe(debounceTime(Constants.playlistsRedrawDelayMilliseconds), takeUntil(this.destroy$))
+                .subscribe(() => {
+                    if (this.hasAvailableWidthChanged()) {
+                        this.orderPlaylists();
+                    }
+                });
+
+            this.applicationService.mouseButtonReleased$
+                .pipe(debounceTime(Constants.playlistsRedrawDelayMilliseconds), takeUntil(this.destroy$))
+                .subscribe(() => {
+                    if (this.hasAvailableWidthChanged()) {
+                        this.orderPlaylists();
+                    }
+                });
+        }, 0);
+    }
+
+    public setSelectedPlaylists(event: MouseEvent, playlistToSelect: PlaylistModel): void {
+        this.mouseSelectionWatcher.setSelectedItems(event, playlistToSelect);
+        this.playlistsPersister.setSelectedPlaylists(this.mouseSelectionWatcher.selectedItems as PlaylistModel[]);
+    }
+
+    public get hasSelectedPlaylists(): boolean {
+        if (this.playlistsPersister == undefined) {
+            return false;
+        }
+
+        return this.playlistsPersister.getSelectedPlaylists(this.playlists).length > 0;
+    }
+
+    public clearSelectedPlaylists(): void {
+        this.mouseSelectionWatcher.initialize(this.playlists, false);
+        this.playlistsPersister.setSelectedPlaylists([]);
+    }
+
+    public applyPlaylistOrder = (playlistOrder: PlaylistOrder): void => {
+        this.selectedPlaylistOrder = playlistOrder;
+        this.playlistsPersister.setSelectedPlaylistOrder(this.selectedPlaylistOrder);
+        this.orderPlaylists();
+    };
+
+    public onPlaylistContextMenu(event: MouseEvent, playlist: PlaylistModel): void {
+        this.contextMenuOpener.open(this.playlistContextMenu, event, playlist);
+    }
+
+    private applySelectedPlaylists(): void {
+        const selectedPlaylists: PlaylistModel[] = this.playlistsPersister.getSelectedPlaylists(this.playlists);
+
+        for (const selectedPlaylist of selectedPlaylists) {
+            selectedPlaylist.isSelected = true;
+        }
+    }
+
+    public async onDeletePlaylistAsync(playlist: PlaylistModel): Promise<void> {
+        const dialogTitle: string = await this.translatorService.getAsync('confirm-delete-playlist');
+        const dialogText: string = await this.translatorService.getAsync('confirm-delete-playlist-long', {
+            playlistName: playlist.name,
+        });
+
+        const userHasConfirmed: boolean = await this.dialogService.showConfirmationDialogAsync(dialogTitle, dialogText);
+
+        if (userHasConfirmed) {
+            try {
+                await this.playlistService.deletePlaylistAsync(playlist);
+            } catch (e: unknown) {
+                this.logger.error(e, 'Could not delete playlist', 'PlaylistBrowserComponent', 'onDeletePlaylistAsync');
+
+                const errorText: string = await this.translatorService.getAsync('delete-playlist-error');
+                this.dialogService.showErrorDialog(errorText);
+            }
+        }
+    }
+
+    public async onEditPlaylistAsync(playlist: PlaylistModel): Promise<void> {
+        await this.dialogService.showEditPlaylistDialogAsync(playlist);
+    }
+
+    public async createPlaylistAsync(): Promise<void> {
+        await this.dialogService.showCreatePlaylistDialogAsync();
+    }
+
+    public async createSmartPlaylistAsync(): Promise<void> {
+        await this.dialogService.showCreateSmartPlaylistDialogAsync();
+    }
+
+    public async onAddToQueueAsync(playlist: PlaylistModel): Promise<void> {
+        await this.playbackService.addPlaylistToQueueAsync(playlist);
+    }
+
+    public onShowInFolder(playlist: PlaylistModel): void {
+        this.desktop.showFileInDirectory(playlist.path);
+    }
+
+    private orderPlaylists(): void {
+        try {
+            this.playlistRows = this.playlistRowsGetter.getPlaylistRows(
+                this.availableWidthInPixels,
+                this.playlists,
+                this.selectedPlaylistOrder,
+                this.playlistCoverSize + 4,
+            );
+            this.applySelectedPlaylists();
+            this.restoreScrollPosition(this.viewPort, this.scrollPositionKey, this.playlistRows.length > 0);
+        } catch (e: unknown) {
+            this.logger.error(e, 'Could not order playlists', 'PlaylistBrowserComponent', 'orderPlaylists');
+        }
+    }
+
+    private initializeAvailableWidth(): void {
+        this.availableWidthInPixels = this.nativeElementProxy.getElementWidth(this.playlistBrowserElement);
+    }
+
+    private hasAvailableWidthChanged(): boolean {
+        const newAvailableWidthInPixels: number = this.nativeElementProxy.getElementWidth(this.playlistBrowserElement);
+
+        if (this.availableWidthInPixels === newAvailableWidthInPixels) {
+            return false;
+        }
+
+        this.availableWidthInPixels = newAvailableWidthInPixels;
+
+        return true;
+    }
+}
